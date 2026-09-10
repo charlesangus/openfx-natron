@@ -3466,6 +3466,10 @@ namespace OFX {
           return kOfxStatFailed;
         }
 
+#       ifdef OFX_SUPPORTS_METADATA
+        image->setFetchedFor(*clipInstance, time);
+#       endif // OFX_SUPPORTS_METADATA
+
         *h3 = image->getPropHandle();
 
         return kOfxStatOK;
@@ -3504,6 +3508,10 @@ namespace OFX {
 
           return kOfxStatFailed;
         }
+
+#       ifdef OFX_SUPPORTS_METADATA
+        image->setFetchedFor(*clipInstance, time);
+#       endif // OFX_SUPPORTS_METADATA
 
         *h3 = image->getPropHandle();
 
@@ -3782,6 +3790,10 @@ namespace OFX {
 
             return kOfxStatFailed;
           }
+
+#         ifdef OFX_SUPPORTS_METADATA
+          image->setFetchedFor(*clipInstance, time);
+#         endif // OFX_SUPPORTS_METADATA
 
           *imageHandle = image->getPropHandle();
 
@@ -4253,6 +4265,10 @@ namespace OFX {
 
             return kOfxStatFailed;
           }
+
+#         ifdef OFX_SUPPORTS_METADATA
+          texture->setFetchedFor(*clipInstance, time);
+#         endif // OFX_SUPPORTS_METADATA
 
           *h3 = texture->getPropHandle();
 
