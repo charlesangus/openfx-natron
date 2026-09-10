@@ -280,6 +280,9 @@ namespace OFX {
         , _isOutput(desc.isOutput())
         , _pixelDepth(kOfxBitDepthNone) 
         , _components(kOfxImageComponentNone)
+#     ifdef OFX_SUPPORTS_METADATA
+        , _metadataGeneration(0)
+#     endif
       {
         // this will add parameters that are needed in an instance but not a
         // Descriptor
@@ -305,6 +308,13 @@ namespace OFX {
         _properties.addNotifyHook(kOfxParamPropSecret, this);
         _properties.addNotifyHook(kOfxParamPropHint, this);
 #     endif
+      }
+
+      ClipInstance::~ClipInstance()
+      {
+#       ifdef OFX_SUPPORTS_METADATA
+        invalidateMetadata();
+#       endif
       }
 
 #     ifdef OFX_EXTENSIONS_NATRON
@@ -658,8 +668,142 @@ namespace OFX {
 
         return none;
       }
-      
-      
+
+#     ifdef OFX_SUPPORTS_METADATA
+      ////////////////////////////////////////////////////////////////////////////////
+      // MetadataSet
+      //
+
+      MetadataSet::MetadataSet(bool writable, bool pluginOwned)
+        : Property::Set()
+        , _referenceCount(1)
+        , _writable(writable)
+        , _pluginOwned(pluginOwned)
+      {
+      }
+
+      MetadataSet::~MetadataSet()
+      {
+      }
+
+      // release the reference
+      void MetadataSet::releaseReference()
+      {
+        if(--_referenceCount <= 0)
+          delete this;
+      }
+
+      ////////////////////////////////////////////////////////////////////////////////
+      // clip instance metadata
+      //
+
+      /// the maximum number of distinct times a clip instance caches metadata for
+      static const size_t kMaxCachedMetadataEntries = 64;
+
+      MetadataSet *ClipInstance::getMetadata(OfxTime time)
+      {
+        bool full;
+        unsigned generation;
+
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.find(time);
+
+          if(it != _metadataCache.end()) {
+            it->second->addReference();
+            return it->second;
+          }
+
+          full = _metadataCache.size() >= kMaxCachedMetadataEntries;
+          generation = _metadataGeneration;
+        }
+
+        // the lock is dropped before invalidateMetadata() and fetchMetadata(), as both reach
+        // other clips, which take their own locks, and they walk the graph in opposite
+        // directions: fetchMetadata() derives an output clip from clips upstream of it, while
+        // invalidateMetadata() goes from an input clip to its own effect's output clip. Holding
+        // one clip's lock across either would let two threads take the same pair of clip locks
+        // in opposite orders
+        if(full) {
+          invalidateMetadata();
+
+          // that flush bumped the generation, and it happened before anything below is
+          // derived, so the value it left behind is the one the derivation is against
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          generation = _metadataGeneration;
+        }
+
+        MetadataSet *metadata = new MetadataSet();
+
+        try {
+          fetchMetadata(time, *metadata);
+        }
+        catch (...) {
+          metadata->releaseReference();
+          throw;
+        }
+
+        MetadataSet *cached = NULL;
+
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.find(time);
+
+          if(it != _metadataCache.end()) {
+            cached = it->second;
+            cached->addReference();
+          }
+          // an invalidation landed while this one was in fetchMetadata, so the set derived
+          // here describes state that has since been replaced. It is handed to the caller,
+          // which asked for it, but not cached, or it would be served as current until the
+          // next invalidation
+          else if(_metadataGeneration == generation) {
+            _metadataCache[time] = metadata;
+            metadata->addReference();
+          }
+        }
+
+        // another thread derived the same time while this one was in fetchMetadata, so its set
+        // is the cached one and the set derived here is dropped
+        if(cached) {
+          metadata->releaseReference();
+          return cached;
+        }
+
+        return metadata;
+      }
+
+      void ClipInstance::invalidateMetadata()
+      {
+        std::map<OfxTime, MetadataSet*> dropped;
+
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          dropped.swap(_metadataCache);
+          ++_metadataGeneration;
+        }
+
+        for(std::map<OfxTime, MetadataSet*>::iterator it = dropped.begin(); it != dropped.end(); ++it)
+          it->second->releaseReference();
+
+        // the effect's output clip holds copies of what its inputs carry, so dropping an
+        // input clip's sets has to drop the ones derived from it too. The recursion stops
+        // at the output clip, which is not an input of anything
+        if(!_isOutput && _effectInstance) {
+          ClipInstance *output = _effectInstance->getClip(kOfxImageEffectOutputClipName);
+
+          if(output)
+            output->invalidateMetadata();
+        }
+      }
+
+      void ClipInstance::fetchMetadata(OfxTime time, Property::Set &metadata)
+      {
+        if(_isOutput && _effectInstance)
+          _effectInstance->getOutputMetadata(time, metadata);
+      }
+#     endif // OFX_SUPPORTS_METADATA
+
       ////////////////////////////////////////////////////////////////////////////////
       // Image
       //
@@ -697,6 +841,10 @@ namespace OFX {
       ImageBase::ImageBase()
         : Property::Set(imageBaseStuffs)
         , _referenceCount(1)
+#       ifdef OFX_SUPPORTS_METADATA
+        , _fetchedClip(NULL)
+        , _fetchedTime(0)
+#       endif
       {
       }
 
@@ -724,6 +872,10 @@ namespace OFX {
       ImageBase::ImageBase(ClipInstance& instance)
         : Property::Set(imageBaseStuffs)
         , _referenceCount(1)
+#       ifdef OFX_SUPPORTS_METADATA
+        , _fetchedClip(NULL)
+        , _fetchedTime(0)
+#       endif
       {
         getClipBits(instance);
       }      
@@ -739,6 +891,10 @@ namespace OFX {
                    std::string uniqueIdentifier) 
         : Property::Set(imageBaseStuffs)
         , _referenceCount(1)
+#       ifdef OFX_SUPPORTS_METADATA
+        , _fetchedClip(NULL)
+        , _fetchedTime(0)
+#       endif
       {
         getClipBits(instance);
 
@@ -778,7 +934,15 @@ namespace OFX {
         //assert(_referenceCount <= 0);
       }
 
-      // release the reference 
+#     ifdef OFX_SUPPORTS_METADATA
+      void ImageBase::setFetchedFor(ClipInstance& instance, OfxTime time)
+      {
+        _fetchedClip = &instance;
+        _fetchedTime = time;
+      }
+#     endif // OFX_SUPPORTS_METADATA
+
+      // release the reference
       void ImageBase::releaseReference()
       {
         _referenceCount -= 1;
