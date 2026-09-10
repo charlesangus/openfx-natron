@@ -32,6 +32,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define OFX_CLIP_H
 
 #include <map>
+#ifdef OFX_SUPPORTS_METADATA
+#include <atomic>
+#include <mutex>
+#endif
 
 #include "ofxImageEffect.h"
 #include "ofxhUtilities.h"
@@ -154,7 +158,7 @@ namespace OFX {
       /// drops one and deletes the set when the last is gone.
       class MetadataSet : public Property::Set {
       protected :
-        int _referenceCount;  ///< reference count on this metadata set
+        std::atomic<int> _referenceCount;  ///< reference count on this metadata set
         bool _writable;       ///< may the metadata suite's set entry points write keys into this
         bool _pluginOwned;    ///< is a plugin holding a reference which metadataRelease drops
 
@@ -192,6 +196,7 @@ namespace OFX {
         std::string             _components;     ///< what components do we have.  Set during the clip prefernces action.
 #       ifdef OFX_SUPPORTS_METADATA
         std::map<OfxTime, MetadataSet*> _metadataCache; ///< metadata sets vended by getMetadata(), keyed by time, one reference held per entry
+        std::mutex _metadataCacheMutex;                 ///< guards every access to _metadataCache, and is never held across a call that can reach another clip
 #       endif
 
       public:

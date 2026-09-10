@@ -686,8 +686,7 @@ namespace OFX {
       // release the reference
       void MetadataSet::releaseReference()
       {
-        _referenceCount -= 1;
-        if(_referenceCount <= 0)
+        if(--_referenceCount <= 0)
           delete this;
       }
 
@@ -700,38 +699,76 @@ namespace OFX {
 
       MetadataSet *ClipInstance::getMetadata(OfxTime time)
       {
-        MetadataSet *metadata;
-        std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.find(time);
+        bool full;
 
-        if(it != _metadataCache.end()) {
-          metadata = it->second;
-        }
-        else {
-          if(_metadataCache.size() >= kMaxCachedMetadataEntries)
-            invalidateMetadata();
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.find(time);
 
-          metadata = new MetadataSet();
-
-          try {
-            fetchMetadata(time, *metadata);
-          }
-          catch (...) {
-            metadata->releaseReference();
-            throw;
+          if(it != _metadataCache.end()) {
+            it->second->addReference();
+            return it->second;
           }
 
-          _metadataCache[time] = metadata;
+          full = _metadataCache.size() >= kMaxCachedMetadataEntries;
         }
 
-        metadata->addReference();
+        // the lock is dropped before invalidateMetadata() and fetchMetadata(), as both reach
+        // other clips, which take their own locks, and they walk the graph in opposite
+        // directions: fetchMetadata() derives an output clip from clips upstream of it, while
+        // invalidateMetadata() goes from an input clip to its own effect's output clip. Holding
+        // one clip's lock across either would let two threads take the same pair of clip locks
+        // in opposite orders
+        if(full)
+          invalidateMetadata();
+
+        MetadataSet *metadata = new MetadataSet();
+
+        try {
+          fetchMetadata(time, *metadata);
+        }
+        catch (...) {
+          metadata->releaseReference();
+          throw;
+        }
+
+        MetadataSet *cached = NULL;
+
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.find(time);
+
+          if(it != _metadataCache.end()) {
+            cached = it->second;
+            cached->addReference();
+          }
+          else {
+            _metadataCache[time] = metadata;
+            metadata->addReference();
+          }
+        }
+
+        // another thread derived the same time while this one was in fetchMetadata, so its set
+        // is the cached one and the set derived here is dropped
+        if(cached) {
+          metadata->releaseReference();
+          return cached;
+        }
+
         return metadata;
       }
 
       void ClipInstance::invalidateMetadata()
       {
-        for(std::map<OfxTime, MetadataSet*>::iterator it = _metadataCache.begin(); it != _metadataCache.end(); ++it)
+        std::map<OfxTime, MetadataSet*> dropped;
+
+        {
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          dropped.swap(_metadataCache);
+        }
+
+        for(std::map<OfxTime, MetadataSet*>::iterator it = dropped.begin(); it != dropped.end(); ++it)
           it->second->releaseReference();
-        _metadataCache.clear();
 
         // the effect's output clip holds copies of what its inputs carry, so dropping an
         // input clip's sets has to drop the ones derived from it too. The recursion stops
