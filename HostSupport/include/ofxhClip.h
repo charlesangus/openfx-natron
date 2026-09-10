@@ -33,6 +33,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <map>
 #ifdef OFX_SUPPORTS_METADATA
+#if __cplusplus < 201103L
+#error "OFX_SUPPORTS_METADATA needs C++11 or later"
+#endif
 #include <atomic>
 #include <mutex>
 #endif
@@ -197,6 +200,7 @@ namespace OFX {
 #       ifdef OFX_SUPPORTS_METADATA
         std::map<OfxTime, MetadataSet*> _metadataCache; ///< metadata sets vended by getMetadata(), keyed by time, one reference held per entry
         std::mutex _metadataCacheMutex;                 ///< guards every access to _metadataCache, and is never held across a call that can reach another clip
+        unsigned _metadataGeneration;                   ///< bumped by invalidateMetadata(), so that a set derived from state a concurrent invalidation has replaced is not cached
 #       endif
 
       public:
@@ -367,6 +371,9 @@ namespace OFX {
         /// on the effect instance. Outside a render call, the optionalBounds should
         /// be 'appropriate' for the.
         /// If bounds is not null, fetch the indicated section of the canonical image plane.
+        /// ofxImageEffect.h requires a separate image handle per fetch, even for identical
+        /// arguments, so return a distinct object from each call and share the pixel data
+        /// by reference counting the buffer rather than the image object.
         virtual ImageEffect::Image* getImage(OfxTime time, const OfxRectD *optionalBounds) = 0;
 
 #     ifdef OFX_SUPPORTS_METADATA

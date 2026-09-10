@@ -31,6 +31,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef OFX_IMAGE_EFFECT_H
 #define OFX_IMAGE_EFFECT_H
 
+#ifdef OFX_SUPPORTS_METADATA
+#include <mutex>
+#endif
+
 #include "ofxCore.h"
 #include "ofxImageEffect.h"
 
@@ -437,6 +441,7 @@ namespace OFX {
         double                                        _outputFrameRate; ///< set by clip prefs
 #       ifdef OFX_SUPPORTS_METADATA
         std::map<std::string, std::string>            _clipMetadataRetainedKeysPropNames; ///< the retained keys property of each clip, by clip name
+        std::mutex                                    _metadataMutex; ///< serialises getOutputMetadata(), and so guards _clipMetadataRetainedKeysPropNames
 #       endif
 
       public:        

@@ -280,6 +280,9 @@ namespace OFX {
         , _isOutput(desc.isOutput())
         , _pixelDepth(kOfxBitDepthNone) 
         , _components(kOfxImageComponentNone)
+#     ifdef OFX_SUPPORTS_METADATA
+        , _metadataGeneration(0)
+#     endif
       {
         // this will add parameters that are needed in an instance but not a
         // Descriptor
@@ -700,6 +703,7 @@ namespace OFX {
       MetadataSet *ClipInstance::getMetadata(OfxTime time)
       {
         bool full;
+        unsigned generation;
 
         {
           std::lock_guard<std::mutex> guard(_metadataCacheMutex);
@@ -711,6 +715,7 @@ namespace OFX {
           }
 
           full = _metadataCache.size() >= kMaxCachedMetadataEntries;
+          generation = _metadataGeneration;
         }
 
         // the lock is dropped before invalidateMetadata() and fetchMetadata(), as both reach
@@ -719,8 +724,14 @@ namespace OFX {
         // invalidateMetadata() goes from an input clip to its own effect's output clip. Holding
         // one clip's lock across either would let two threads take the same pair of clip locks
         // in opposite orders
-        if(full)
+        if(full) {
           invalidateMetadata();
+
+          // that flush bumped the generation, and it happened before anything below is
+          // derived, so the value it left behind is the one the derivation is against
+          std::lock_guard<std::mutex> guard(_metadataCacheMutex);
+          generation = _metadataGeneration;
+        }
 
         MetadataSet *metadata = new MetadataSet();
 
@@ -742,7 +753,11 @@ namespace OFX {
             cached = it->second;
             cached->addReference();
           }
-          else {
+          // an invalidation landed while this one was in fetchMetadata, so the set derived
+          // here describes state that has since been replaced. It is handed to the caller,
+          // which asked for it, but not cached, or it would be served as current until the
+          // next invalidation
+          else if(_metadataGeneration == generation) {
             _metadataCache[time] = metadata;
             metadata->addReference();
           }
@@ -765,6 +780,7 @@ namespace OFX {
         {
           std::lock_guard<std::mutex> guard(_metadataCacheMutex);
           dropped.swap(_metadataCache);
+          ++_metadataGeneration;
         }
 
         for(std::map<OfxTime, MetadataSet*>::iterator it = dropped.begin(); it != dropped.end(); ++it)

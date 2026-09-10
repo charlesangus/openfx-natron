@@ -2974,6 +2974,18 @@ namespace OFX {
 
       void Instance::getOutputMetadata(OfxTime time, Property::Set &metadata)
       {
+        /// held across the whole body, as the get metadata action is not a render call and
+        /// so nothing in kOfxImageEffectPluginRenderThreadSafety lets an effect run two of
+        /// them at once, and as metadataRetainedKeysPropName() below inserts into a map
+        /// shared by every caller.
+        ///
+        /// Unlike the clip caches' locks, this one is deliberately held across the
+        /// getMetadata() calls on the input clips, which reach the same lock on the
+        /// instance upstream of this one. That cannot deadlock because the effect graph is
+        /// a DAG and this walk only ever goes downstream to upstream, so any two instances'
+        /// locks are always taken in that one order and no cycle of waiters can form
+        std::lock_guard<std::mutex> guard(_metadataMutex);
+
         /// the input clips, in the order the effect described them
         std::vector<ClipInstance *> inputs;
         const std::vector<ClipDescriptor*> &clipsByOrder = _descriptor->getClipsByOrder();
