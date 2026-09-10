@@ -3915,6 +3915,309 @@ namespace OFX {
       };
 #   endif
 
+#   ifdef OFX_SUPPORTS_METADATA
+      ////////////////////////////////////////////////////////////////////////////////
+      ////////////////////////////////////////////////////////////////////////////////
+      ////////////////////////////////////////////////////////////////////////////////
+      /// The metadata suite functions
+
+      static OfxStatus clipGetMetadata(OfxImageClipHandle clip,
+                                       OfxTime time,
+                                       OfxPropertySetHandle *metadata)
+      {
+        try {
+        if (!metadata) {
+          return kOfxStatErrBadHandle;
+        }
+
+        ClipInstance *clipInstance = reinterpret_cast<ClipInstance*>(clip);
+
+        if (!clipInstance || !clipInstance->verifyMagic()) {
+          *metadata = NULL;
+
+          return kOfxStatErrBadHandle;
+        }
+
+        MetadataSet *set = clipInstance->getMetadata(time);
+
+        if (!set) {
+          *metadata = NULL;
+
+          return kOfxStatFailed;
+        }
+
+        if (set->getProperties().empty()) {
+          // no handle goes back to the plugin, so the reference the clip added for us
+          // is ours to drop
+          set->releaseReference();
+          *metadata = NULL;
+
+          return kOfxStatReplyDefault;
+        }
+
+        *metadata = set->getPropHandle();
+
+        return kOfxStatOK;
+        } catch (const Property::Exception& e) {
+          *metadata = NULL;
+
+          return e.getStatus();
+        } catch (std::bad_alloc&) {
+          *metadata = NULL;
+
+          return kOfxStatErrMemory;
+        } catch (...) {
+          *metadata = NULL;
+
+          return kOfxStatErrBadHandle;
+        }
+      }
+
+      static OfxStatus imageGetMetadata(OfxPropertySetHandle image,
+                                        OfxPropertySetHandle *metadata)
+      {
+        try {
+        if (!metadata) {
+          return kOfxStatErrBadHandle;
+        }
+
+        Property::Set *pset = reinterpret_cast<Property::Set*>(image);
+
+        if (!pset || !pset->verifyMagic()) {
+          *metadata = NULL;
+
+          return kOfxStatErrBadHandle;
+        }
+
+        ImageBase *imageBase = dynamic_cast<ImageBase*>(pset);
+
+        if (!imageBase) {
+          *metadata = NULL;
+
+          return kOfxStatErrBadHandle;
+        }
+
+        ClipInstance *clipInstance = imageBase->getFetchedClip();
+
+        if (!clipInstance) {
+          *metadata = NULL;
+
+          return kOfxStatReplyDefault;
+        }
+
+        return clipGetMetadata(clipInstance->getHandle(), imageBase->getFetchedTime(), metadata);
+        } catch (std::bad_alloc&) {
+          *metadata = NULL;
+
+          return kOfxStatErrMemory;
+        } catch (...) {
+          *metadata = NULL;
+
+          return kOfxStatErrBadHandle;
+        }
+      }
+
+      static OfxStatus metadataRelease(OfxPropertySetHandle metadata)
+      {
+        try {
+        Property::Set *pset = reinterpret_cast<Property::Set*>(metadata);
+
+        if (!pset || !pset->verifyMagic()) {
+          return kOfxStatErrBadHandle;
+        }
+
+        MetadataSet *set = dynamic_cast<MetadataSet*>(pset);
+
+        if(!set) {
+          return kOfxStatErrBadHandle;
+        }
+
+        if(!set->isPluginOwned()) {
+          return kOfxStatErrValue;
+        }
+
+        set->releaseReference();
+
+        return kOfxStatOK;
+        } catch (...) {
+          return kOfxStatErrBadHandle;
+        }
+      }
+
+      static OfxStatus metadataEnumerate(OfxPropertySetHandle metadata,
+                                         OfxMetadataEnumerateFuncV1 callback,
+                                         void *userData)
+      {
+        try {
+        if (!callback) {
+          return kOfxStatErrBadHandle;
+        }
+
+        Property::Set *pset = reinterpret_cast<Property::Set*>(metadata);
+
+        if (!pset || !pset->verifyMagic()) {
+          return kOfxStatErrBadHandle;
+        }
+
+        MetadataSet *set = dynamic_cast<MetadataSet*>(pset);
+
+        if (!set) {
+          return kOfxStatErrBadHandle;
+        }
+
+        // the callback may call back into the suite, and may release this very handle,
+        // so walk a copy of the key list rather than the map itself
+        std::vector<std::string> keys;
+        const Property::PropertyMap &map = set->getProperties();
+        Property::PropertyMap::const_iterator i;
+        for(i = map.begin(); i != map.end(); ++i)
+          keys.push_back((*i).first);
+
+        std::vector<std::string>::const_iterator k;
+        for(k = keys.begin(); k != keys.end(); ++k) {
+          OfxStatus st = callback((*k).c_str(), userData);
+          if(st != kOfxStatOK)
+            return st;
+        }
+
+        return kOfxStatOK;
+        } catch (...) {
+          return kOfxStatErrBadHandle;
+        }
+      }
+
+      /// a NULL among the values would be a crash in the host rather than a status, so
+      /// the write path looks for one; only a string can be NULL
+      static bool metadataValuesUsable(const char *const*values, int count)
+      {
+        for (int i = 0; i < count; ++i) {
+          if (!values[i]) {
+            return false;
+          }
+        }
+
+        return true;
+      }
+
+      static bool metadataValuesUsable(const double *, int)
+      {
+        return true;
+      }
+
+      static bool metadataValuesUsable(const int *, int)
+      {
+        return true;
+      }
+
+      template<class T>
+      static OfxStatus metadataSetValues(OfxPropertySetHandle metadata,
+                                         const char *key,
+                                         int count,
+                                         const typename T::APIType *values,
+                                         typename T::APIType empty)
+      {
+        try {
+        Property::Set *pset = reinterpret_cast<Property::Set*>(metadata);
+
+        if (!pset || !pset->verifyMagic()) {
+          return kOfxStatErrBadHandle;
+        }
+
+        MetadataSet *set = dynamic_cast<MetadataSet*>(pset);
+
+        if (!set || !key) {
+          return kOfxStatErrBadHandle;
+        }
+
+        if (!set->isWritable() || !key[0] || count < 1 || !values) {
+          return kOfxStatErrValue;
+        }
+
+        // the values are read through before the key is touched, so a set which is
+        // refused is a set which has not been written to
+        if (!metadataValuesUsable(values, count)) {
+          return kOfxStatErrValue;
+        }
+
+        // build and fill the replacement off the set, so a throw while copying values
+        // leaves the set exactly as it was rather than holding a half-written key;
+        // addProperty below both installs a new key and replaces an existing one,
+        // taking ownership either way
+        std::unique_ptr<Property::PropertyTemplate<T> > replacement(new Property::PropertyTemplate<T>(key, count, false, empty));
+
+        replacement->setValueN(values, count);
+
+        set->addProperty(replacement.release());
+
+        return kOfxStatOK;
+        } catch (const Property::Exception& e) {
+          return e.getStatus();
+        } catch (std::bad_alloc&) {
+          return kOfxStatErrMemory;
+        } catch (...) {
+          return kOfxStatErrBadHandle;
+        }
+      }
+
+      static OfxStatus metadataSetString(OfxPropertySetHandle metadata,
+                                         const char *key,
+                                         const char *value)
+      {
+        return metadataSetValues<Property::StringValue>(metadata, key, 1, &value, "");
+      }
+
+      static OfxStatus metadataSetDouble(OfxPropertySetHandle metadata,
+                                         const char *key,
+                                         double value)
+      {
+        return metadataSetValues<Property::DoubleValue>(metadata, key, 1, &value, 0);
+      }
+
+      static OfxStatus metadataSetInt(OfxPropertySetHandle metadata,
+                                      const char *key,
+                                      int value)
+      {
+        return metadataSetValues<Property::IntValue>(metadata, key, 1, &value, 0);
+      }
+
+      static OfxStatus metadataSetStringN(OfxPropertySetHandle metadata,
+                                          const char *key,
+                                          int count,
+                                          const char *const*values)
+      {
+        return metadataSetValues<Property::StringValue>(metadata, key, count, values, "");
+      }
+
+      static OfxStatus metadataSetDoubleN(OfxPropertySetHandle metadata,
+                                          const char *key,
+                                          int count,
+                                          const double *values)
+      {
+        return metadataSetValues<Property::DoubleValue>(metadata, key, count, values, 0);
+      }
+
+      static OfxStatus metadataSetIntN(OfxPropertySetHandle metadata,
+                                       const char *key,
+                                       int count,
+                                       const int *values)
+      {
+        return metadataSetValues<Property::IntValue>(metadata, key, count, values, 0);
+      }
+
+      static const struct OfxMetadataSuiteV1 gMetadataSuite = {
+        clipGetMetadata,
+        imageGetMetadata,
+        metadataRelease,
+        metadataEnumerate,
+        metadataSetString,
+        metadataSetDouble,
+        metadataSetInt,
+        metadataSetStringN,
+        metadataSetDoubleN,
+        metadataSetIntN
+      };
+#   endif // OFX_SUPPORTS_METADATA
+
 #   ifdef OFX_SUPPORTS_OPENGLRENDER
       ////////////////////////////////////////////////////////////////////////////////
       ////////////////////////////////////////////////////////////////////////////////
@@ -4572,6 +4875,14 @@ namespace OFX {
         }
         else if (strcmp(suiteName,kFnOfxImageEffectPlaneSuite) == 0 && suiteVersion == 2) {
             return (void*)&gPlaneSuiteV2;
+        }
+#     endif
+#     ifdef OFX_SUPPORTS_METADATA
+        else if (strcmp(suiteName, kOfxMetadataSuite)==0) {
+          if(suiteVersion == 1)
+            return (void*)&gMetadataSuite;
+          else
+            return NULL;
         }
 #     endif
         else  /// otherwise just grab the base class one, which is props and memory
