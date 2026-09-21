@@ -281,6 +281,16 @@ This is a property on parameters of type ::kOfxParamTypeChoice, and tells the ch
 
 /** @brief Generic parameter name for a channel selector. If the plugin doesn't define these, and
     kNatronOfxImageEffectPropChannelSelector is not set by the plugin, the host may add its own channel selector.
+
+    A plugin that declares this exact quad (all four parameters, by name) has it adopted by the
+    host: the four parameters are made hidden and non-persistent and forced to true, and the host
+    masks unprocessed channels of each output plane using its own channel-set parameter instead.
+    This is by design for a plugin whose quad is a per-channel output mask. It is not appropriate
+    for a plugin whose quad instead changes what the effect computes (selects between inputs,
+    collapses several channels into one decision, and the like); such a plugin should not rely on
+    the standard names for that purpose, since a host that adopts the quad will silently change
+    its behaviour. In this host, the openfx-misc KeyMix, DenoiseSharpen and ClipTest plugins are
+    such exceptions and keep ownership of their own quad.
  **/
 #define kNatronOfxParamProcessR      "NatronOfxParamProcessR"
 #define kNatronOfxParamProcessRLabel "R"
