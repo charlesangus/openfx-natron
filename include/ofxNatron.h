@@ -237,6 +237,27 @@ This is a property on parameters of type ::kOfxParamTypeChoice, and tells the ch
  */
 #define kNatronOfxExtraCreatedPlanes "NatronOfxExtraCreatedPlanes"
 
+/** @brief Name of the project's working colourspace in the colour config given by kOfxImageEffectPropOCIOConfig.
+
+ - Type - string X 1
+ - Property Set - image effect instance (read only)
+ - Default value - empty when the host has no project colour management
+
+ The value is re-read from the project on every get, so it follows project changes without the instance being recreated.
+ */
+#define NatronOfxImageEffectPropOCIOWorkingColourspace "NatronOfxImageEffectPropOCIOWorkingColourspace"
+
+/** @brief Names of the project's default file colourspaces in the colour config given by kOfxImageEffectPropOCIOConfig.
+
+ - Type - string X 4
+ - Property Set - image effect instance (read only)
+ - Valid values - index 0: 8-bit, index 1: 16-bit, index 2: log, index 3: float
+ - Default value - none when the host has no project colour management
+
+ The values are re-read from the project on every get, so they follow project changes without the instance being recreated.
+ */
+#define NatronOfxImageEffectPropOCIOFileColourspaces "NatronOfxImageEffectPropOCIOFileColourspaces"
+
 /** @brief Indicates if the host may add a channel selector, and which components should be selected by default.
 
  - Type - string X 1
