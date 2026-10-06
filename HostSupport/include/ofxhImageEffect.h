@@ -581,6 +581,15 @@ namespace OFX {
         //
 #ifdef OFX_EXTENSIONS_NATRON
         virtual const std::vector<std::string>& getUserCreatedPlanes() const;
+
+        /// The colour config of the project: an ocio:// URI or an absolute path. Default: empty.
+        virtual const std::string& getOCIOConfigSource() const;
+
+        /// The working colourspace of the project. Default: empty.
+        virtual const std::string& getOCIOWorkingColourspace() const;
+
+        /// The project's default file colourspaces: 8-bit, 16-bit, log, float. Default: empty.
+        virtual const std::vector<std::string>& getOCIOFileColourspaces() const;
 #endif
 
         // The size of the current project in canonical coordinates.

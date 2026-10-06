@@ -69,6 +69,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef OFX_SUPPORTS_METADATA
 #include "ofxMetadata.h"
 #endif
+#include "ofxColour.h"
 #include "ofxOld.h" // old plugins may rely on deprecated properties being present
 
 #include <memory>
@@ -582,6 +583,9 @@ namespace OFX {
 #     endif
 #     ifdef OFX_EXTENSIONS_NATRON
         { kNatronOfxExtraCreatedPlanes,         Property::eString,    0, true, ""},
+        { kOfxImageEffectPropOCIOConfig,        Property::eString,    1, true, ""},
+        { NatronOfxImageEffectPropOCIOWorkingColourspace, Property::eString, 1, true, ""},
+        { NatronOfxImageEffectPropOCIOFileColourspaces, Property::eString, 4, true, ""},
 #     endif
         Property::propSpecEnd
       };
@@ -735,6 +739,14 @@ namespace OFX {
 
       // do nothing
       int Instance::getDimension(const std::string &name) const OFX_EXCEPTION_SPEC {
+#ifdef OFX_EXTENSIONS_NATRON
+        if (name==kOfxImageEffectPropOCIOConfig || name==NatronOfxImageEffectPropOCIOWorkingColourspace) {
+          return 1;
+        }
+        if (name==NatronOfxImageEffectPropOCIOFileColourspaces) {
+          return (int)getOCIOFileColourspaces().size();
+        }
+#endif
         printf("failing in %s with name=%s\n", __PRETTY_FUNCTION__, name.c_str());
         throw Property::Exception(kOfxStatErrMissingHostFeature);
       }
@@ -823,6 +835,21 @@ namespace OFX {
 
       const std::string &Instance::getStringProperty(const std::string &name, int n) const OFX_EXCEPTION_SPEC
       {
+#ifdef OFX_EXTENSIONS_NATRON
+        if (name==kOfxImageEffectPropOCIOConfig) {
+          if (n != 0) throw Property::Exception(kOfxStatErrBadIndex);
+          return getOCIOConfigSource();
+        }
+        if (name==NatronOfxImageEffectPropOCIOWorkingColourspace) {
+          if (n != 0) throw Property::Exception(kOfxStatErrBadIndex);
+          return getOCIOWorkingColourspace();
+        }
+        if (name==NatronOfxImageEffectPropOCIOFileColourspaces) {
+          const std::vector<std::string>& spaces = getOCIOFileColourspaces();
+          if (n < 0 || n >= (int)spaces.size()) throw Property::Exception(kOfxStatErrBadIndex);
+          return spaces[n];
+        }
+#endif
 #ifdef OFX_EXTENSIONS_NUKE
         if (name==kNatronOfxExtraCreatedPlanes) {
           const std::vector<std::string>& userPlanes = getUserCreatedPlanes();
@@ -840,6 +867,22 @@ namespace OFX {
       {
         if (count <= 0) throw Property::Exception(kOfxStatErrValue);
 #ifdef OFX_EXTENSIONS_NATRON
+        if (name==kOfxImageEffectPropOCIOConfig) {
+          values[0] = getOCIOConfigSource().c_str();
+          return;
+        }
+        if (name==NatronOfxImageEffectPropOCIOWorkingColourspace) {
+          values[0] = getOCIOWorkingColourspace().c_str();
+          return;
+        }
+        if (name==NatronOfxImageEffectPropOCIOFileColourspaces) {
+          const std::vector<std::string>& spaces = getOCIOFileColourspaces();
+          int minCount = (int)spaces.size() < count ? (int)spaces.size() : count;
+          for (int i = 0; i < minCount; ++i) {
+            values[i] = spaces[i].c_str();
+          }
+          return;
+        }
         if (name==kNatronOfxExtraCreatedPlanes) {
           const std::vector<std::string>& componentsPresents = getUserCreatedPlanes();
           int minCount = (int)componentsPresents.size() < count ? (int)componentsPresents.size() : count;
@@ -854,6 +897,24 @@ namespace OFX {
 
 #ifdef OFX_EXTENSIONS_NATRON
       const std::vector<std::string>& Instance::getUserCreatedPlanes() const
+      {
+        static const std::vector<std::string> emptyVec;
+        return emptyVec;
+      }
+
+      const std::string& Instance::getOCIOConfigSource() const
+      {
+        static const std::string empty;
+        return empty;
+      }
+
+      const std::string& Instance::getOCIOWorkingColourspace() const
+      {
+        static const std::string empty;
+        return empty;
+      }
+
+      const std::vector<std::string>& Instance::getOCIOFileColourspaces() const
       {
         static const std::vector<std::string> emptyVec;
         return emptyVec;
